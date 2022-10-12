@@ -6,7 +6,11 @@
   </PropertyGroup>
   <ItemGroup>
     <Compile Include="Program.fs" />
-    <Content Include="paket.references" />
   </ItemGroup>
-  <Import Project=".paket\Paket.Restore.targets" />
+  <ItemGroup>
+    <PackageReference Include="FSharp.Data" Version="5.0.2" />
+    <PackageReference Include="Giraffe.Htmx" Version="1.8.0" />
+    <PackageReference Include="Giraffe.ViewEngine.Htmx" Version="1.8.0" />
+    <PackageReference Include="Saturn" Version="0.16.1" />
+  </ItemGroup>
 </Project>

@@ -6,13 +6,10 @@ open System
 module Domain =
     /// The input search request parameters.
     [<CLIMutable>]
-    type SearchRequest = {
+    type RawSearchRequest = {
         SearchInput: string
         SortColumn: string
     }
-
-    [<Measure>]
-    type Gbp
 
     /// Represents a report for a specific country.
     type CountryReport = {
@@ -47,6 +44,17 @@ module Domain =
             | "Fossil" -> Some Fossil
             | "Nuclear" -> Some Nuclear
             | _ -> None
+
+    type SearchRequest =
+        {
+            SearchInput: string option
+            SortColumn: SortColumn option
+        }
+
+        static member OfRawSearchRequest(request: RawSearchRequest) = {
+            SearchInput = request.SearchInput |> Option.ofObj
+            SortColumn = SortColumn.TryOfString request.SortColumn
+        }
 
     /// Sorts the supplied reports using the specified sort column.
     let sortReports reports sortColumn =
@@ -187,8 +195,11 @@ module DataAccess =
     }
 
     /// Gets the top ten destinations that contain the supplied text.
-    let findDestinations (text: string) =
-        countriesAndRegions |> List.filter (containsText text) |> List.truncate 10
+    let findDestinations (text: string option) =
+        match text with
+        | None -> countriesAndRegions
+        | Some text -> countriesAndRegions |> List.filter (containsText text)
+        |> List.truncate 10
 
     /// Finds all country-level reports that contain the supplied text.
     let findReportsByCountries (text: string) =
@@ -216,25 +227,26 @@ module Api =
 
     /// Finds destinations to suggest.
     let suggestDestinations next (ctx: HttpContext) = task {
-        let! request = ctx.BindModelAsync<SearchRequest>()
+        let! request = ctx.BindModelAsync<RawSearchRequest>()
+        let request = request |> SearchRequest.OfRawSearchRequest
         let countries = DataAccess.findDestinations request.SearchInput
         return! htmlView (View.createCountriesSuggestions countries) next ctx
     }
 
     /// Gets all energy reports using the query information supplied in the body.
     let findEnergyReports next (ctx: HttpContext) = task {
-        let! query = ctx.BindModelAsync<SearchRequest>()
+        let! request = ctx.BindModelAsync<RawSearchRequest>()
+        let request = request |> SearchRequest.OfRawSearchRequest
 
         let reports =
             let unsorted =
-                match query.SearchInput with
-                | ""
-                | null -> DataAccess.findReportsByCountries ""
-                | searchInput ->
+                match request.SearchInput with
+                | None -> DataAccess.findReportsByCountries ""
+                | Some searchInput ->
                     DataAccess.tryExactMatchReport searchInput
                     |> Option.defaultWith (fun () -> DataAccess.findReportsByCountries searchInput)
 
-            SortColumn.TryOfString query.SortColumn
+            request.SortColumn
             |> Option.map (Domain.sortReports unsorted)
             |> Option.defaultValue unsorted
 
