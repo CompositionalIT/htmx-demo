@@ -1,13 +1,10 @@
-﻿open System
+﻿open Giraffe
 open Saturn
-open Giraffe
-open Giraffe.ViewEngine
-open Giraffe.ViewEngine.Htmx
-open Giraffe.Htmx
-open Microsoft.AspNetCore.Http
+open System
 
 [<AutoOpen>]
 module Domain =
+    /// The input search request parameters.
     [<CLIMutable>]
     type SearchRequest = {
         SearchInput: string
@@ -17,7 +14,8 @@ module Domain =
     [<Measure>]
     type Gbp
 
-    type Report = {
+    /// Represents a report for a specific country.
+    type CountryReport = {
         Country: string
         Nuclear: float option
         EnergyImports: float option
@@ -25,6 +23,7 @@ module Domain =
         FossilFuelEnergyConsumption: float option
     }
 
+    /// The sort column to use.
     type SortColumn =
         | Renewables
         | Country
@@ -49,13 +48,27 @@ module Domain =
             | "Nuclear" -> Some Nuclear
             | _ -> None
 
+    /// Sorts the supplied reports using the specified sort column.
+    let sortReports reports sortColumn =
+        match sortColumn with
+        | Country -> reports |> List.sortBy (fun c -> c.Country)
+        | Imports -> reports |> List.sortByDescending (fun c -> c.EnergyImports)
+        | Fossil -> reports |> List.sortByDescending (fun c -> c.FossilFuelEnergyConsumption)
+        | Renewables -> reports |> List.sortByDescending (fun c -> c.RenewableEnergyConsumption)
+        | Nuclear -> reports |> List.sortByDescending (fun c -> c.Nuclear)
+
 module View =
-    let describe =
+    open Giraffe.Htmx
+    open Giraffe.ViewEngine
+    open Giraffe.ViewEngine.Htmx
+
+    let private describe =
         function
         | None -> str "-"
         | Some v -> str $"%.2f{v}%%"
 
-    let searchResults reports =
+    /// Builds a table based on all reports.
+    let createReportsTable reports =
         table [ _class "table" ] [
             thead [] [
                 tr [] [
@@ -64,8 +77,9 @@ module View =
                             _hxInclude "#search-input"
                             _hxTarget "#search-results"
                             _hxPost "/do-search"
-                            _hxTrigger "mouseenter"
+                            _hxTrigger "click"
                             _hxVals $"{{ \"sortColumn\" : \"{column.AsString}\" }}"
+                            _style "cursor: pointer"
                         ] [ str value ]
 
                     makeTh "Country" Country
@@ -87,7 +101,8 @@ module View =
             ]
         ]
 
-    let page =
+    /// The initial start page of the application.
+    let startingPage =
         html [] [
             head [] [
                 link [
@@ -132,8 +147,10 @@ module View =
                 div [ _id "search-results"; _class "mt-3" ] []
             ]
         ]
+        |> htmlView
 
-    let suggestions countries =
+    /// Creates a datalist for the supplied countries.
+    let createCountriesSuggestions countries =
         datalist [ _id "search-suggestions" ] [
             for (country: string) in countries do
                 option [ _value country ] []
@@ -141,19 +158,19 @@ module View =
 
 module DataAccess =
     open FSharp.Data
-    let ctx = WorldBankData.GetDataContext()
-    let allCountries = ctx.Countries |> Seq.toList
-    let allRegions = ctx.Regions |> Seq.toList
+    let private ctx = WorldBankData.GetDataContext()
+    let private allCountries = ctx.Countries |> Seq.toList
+    let private allRegions = ctx.Regions |> Seq.toList
 
-    let countriesAndRegions =
+    let private countriesAndRegions =
         let countries = allCountries |> List.map (fun country -> country.Name)
         let regions = allRegions |> List.map (fun region -> region.Name)
         countries @ regions
 
-    let containsText (text: string) (v: string) =
+    let private containsText (text: string) (v: string) =
         v.Contains(text, StringComparison.CurrentCultureIgnoreCase)
 
-    let createReport (country: WorldBankData.ServiceTypes.Country) = {
+    let private createReport (country: WorldBankData.ServiceTypes.Country) = {
         Country = country.Name
         Nuclear =
             country.Indicators.``Alternative and nuclear energy (% of total energy use)``.Values
@@ -169,17 +186,19 @@ module DataAccess =
             |> Seq.tryLast
     }
 
-    let findSuggestions (text: string) =
+    /// Gets the top ten destinations that contain the supplied text.
+    let findDestinations (text: string) =
         countriesAndRegions |> List.filter (containsText text) |> List.truncate 10
 
-    let getReportsByCountries (text: string) =
+    /// Finds all country-level reports that contain the supplied text.
+    let findReportsByCountries (text: string) =
         allCountries
         |> List.filter (fun country -> country.Name |> containsText text)
         |> List.truncate 20
-        |> List.toArray
-        |> Array.Parallel.map createReport
-        |> Array.toList
+        |> List.map createReport
 
+    /// Looks for an exact match of a country or region based on the text supplied. If a region is matched, all
+    /// countries within that region are returned.
     let tryExactMatchReport (text: string) =
         let matchingCountry =
             allCountries
@@ -193,38 +212,39 @@ module DataAccess =
             |> Option.map (fun region -> region.Countries |> Seq.map createReport |> Seq.toList)
 
 module Api =
-    let getSuggestions next (ctx: HttpContext) = task {
+    open Microsoft.AspNetCore.Http
+
+    /// Finds destinations to suggest.
+    let suggestDestinations next (ctx: HttpContext) = task {
         let! request = ctx.BindModelAsync<SearchRequest>()
-        let countries = DataAccess.findSuggestions request.SearchInput
-        return! htmlView (View.suggestions countries) next ctx
+        let countries = DataAccess.findDestinations request.SearchInput
+        return! htmlView (View.createCountriesSuggestions countries) next ctx
     }
 
-    let doSearch next (ctx: HttpContext) = task {
+    /// Gets all energy reports using the query information supplied in the body.
+    let findEnergyReports next (ctx: HttpContext) = task {
         let! query = ctx.BindModelAsync<SearchRequest>()
 
         let reports =
-            match query with
-            | { SearchInput = ("" | null) } -> DataAccess.getReportsByCountries ""
-            | _ ->
-                DataAccess.tryExactMatchReport query.SearchInput
-                |> Option.defaultWith (fun () -> DataAccess.getReportsByCountries query.SearchInput)
+            let unsorted =
+                match query.SearchInput with
+                | ""
+                | null -> DataAccess.findReportsByCountries ""
+                | searchInput ->
+                    DataAccess.tryExactMatchReport searchInput
+                    |> Option.defaultWith (fun () -> DataAccess.findReportsByCountries searchInput)
 
-        let reports =
-            match SortColumn.TryOfString query.SortColumn with
-            | Some Country -> reports |> List.sortBy (fun c -> c.Country)
-            | Some Imports -> reports |> List.sortByDescending (fun c -> c.EnergyImports)
-            | Some Fossil -> reports |> List.sortByDescending (fun c -> c.FossilFuelEnergyConsumption)
-            | Some Renewables -> reports |> List.sortByDescending (fun c -> c.RenewableEnergyConsumption)
-            | Some Nuclear -> reports |> List.sortByDescending (fun c -> c.Nuclear)
-            | None -> reports
+            SortColumn.TryOfString query.SortColumn
+            |> Option.map (Domain.sortReports unsorted)
+            |> Option.defaultValue unsorted
 
-        return! htmlView (View.searchResults reports) next ctx
+        return! htmlView (View.createReportsTable reports) next ctx
     }
 
 let allRoutes = router {
-    get "/" (htmlView View.page)
-    post "/search-suggestions" Api.getSuggestions
-    post "/do-search" Api.doSearch
+    get "/" View.startingPage
+    post "/search-suggestions" Api.suggestDestinations
+    post "/do-search" Api.findEnergyReports
 }
 
 let app = application { use_router allRoutes }
