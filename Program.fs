@@ -99,9 +99,7 @@ module View =
             body [ _class "p-3 m-0 border-0 bd-example" ] [
                 form [] [
                     div [ _class "mb-3" ] [
-                        label [ _for "search-input"; _class "form-label" ] [
-                            str "Find energy stats!"
-                        ]
+                        label [ _for "search-input"; _class "form-label" ] [ str "Find energy stats!" ]
                         datalist [ _id "search-suggestions" ] []
                         input [
                             _id "search-input"
@@ -191,8 +189,7 @@ module DataAccess =
         | Some country -> Some [ createReport country ]
         | None ->
             allRegions
-            |> List.tryFind (fun region ->
-                region.Name.Equals(text, StringComparison.CurrentCultureIgnoreCase))
+            |> List.tryFind (fun region -> region.Name.Equals(text, StringComparison.CurrentCultureIgnoreCase))
             |> Option.map (fun region -> region.Countries |> Seq.map createReport |> Seq.toList)
 
 module Api =
@@ -213,13 +210,11 @@ module Api =
                 |> Option.defaultWith (fun () -> DataAccess.getReportsByCountries query.SearchInput)
 
         let reports =
-            match query.SortColumn |> SortColumn.TryOfString with
+            match SortColumn.TryOfString query.SortColumn with
             | Some Country -> reports |> List.sortBy (fun c -> c.Country)
             | Some Imports -> reports |> List.sortByDescending (fun c -> c.EnergyImports)
-            | Some Fossil ->
-                reports |> List.sortByDescending (fun c -> c.FossilFuelEnergyConsumption)
-            | Some Renewables ->
-                reports |> List.sortByDescending (fun c -> c.RenewableEnergyConsumption)
+            | Some Fossil -> reports |> List.sortByDescending (fun c -> c.FossilFuelEnergyConsumption)
+            | Some Renewables -> reports |> List.sortByDescending (fun c -> c.RenewableEnergyConsumption)
             | Some Nuclear -> reports |> List.sortByDescending (fun c -> c.Nuclear)
             | None -> reports
 
