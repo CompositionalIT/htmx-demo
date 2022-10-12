@@ -100,7 +100,7 @@ module View =
                 form [] [
                     div [ _class "mb-3" ] [
                         label [ _for "search-input"; _class "form-label" ] [
-                            str "Find fruit from a country"
+                            str "Find energy stats!"
                         ]
                         datalist [ _id "search-suggestions" ] []
                         input [
@@ -111,10 +111,10 @@ module View =
                             _placeholder "Enter a country name"
                             _type "search"
 
+                            _hxTrigger "keyup changed delay:500ms"
                             _hxPost "/search-suggestions"
                             _hxTarget "#search-suggestions"
                             _hxSwap HxSwap.OuterHtml
-                            _hxTrigger "keyup changed delay:500ms"
                         ]
                     ]
                     button [
@@ -124,8 +124,8 @@ module View =
                         _type "button"
 
                         _hxPost "/do-search"
-                        _hxTarget "#search-results"
                         _hxInclude "#search-input"
+                        _hxTarget "#search-results"
                     ] [
                         span [ _class "htmx-indicator spinner-border spinner-border-sm" ] []
                         str "Search!"
@@ -226,12 +226,12 @@ module Api =
         return! htmlView (View.searchResults reports) next ctx
     }
 
-let theAppRouter = router {
+let allRoutes = router {
     get "/" (htmlView View.page)
     post "/search-suggestions" Api.getSuggestions
     post "/do-search" Api.doSearch
 }
 
-let app = application { use_router theAppRouter }
+let app = application { use_router allRoutes }
 
 run app
