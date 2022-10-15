@@ -57,13 +57,13 @@ module Domain =
         }
 
     /// Sorts the supplied reports using the specified sort column.
-    let sortReports reports sortColumn =
+    let sortBy sortColumn =
         match sortColumn with
-        | Country -> reports |> List.sortBy (fun c -> c.Country)
-        | Imports -> reports |> List.sortByDescending (fun c -> c.EnergyImports)
-        | Fossil -> reports |> List.sortByDescending (fun c -> c.FossilFuelEnergyConsumption)
-        | Renewables -> reports |> List.sortByDescending (fun c -> c.RenewableEnergyConsumption)
-        | Nuclear -> reports |> List.sortByDescending (fun c -> c.Nuclear)
+        | Country -> Seq.sortBy (fun c -> c.Country)
+        | Imports -> Seq.sortByDescending (fun c -> c.EnergyImports)
+        | Fossil -> Seq.sortByDescending (fun c -> c.FossilFuelEnergyConsumption)
+        | Renewables -> Seq.sortByDescending (fun c -> c.RenewableEnergyConsumption)
+        | Nuclear -> Seq.sortByDescending (fun c -> c.Nuclear)
 
 module View =
     open Giraffe.Htmx
@@ -75,10 +75,23 @@ module View =
         | None -> str "-"
         | Some v -> str $"%.2f{v}%%"
 
+
     /// Builds a table based on all reports.
     let createReportsTable reports =
-        table [ _class "table" ] [
-            thead [] [
+        let pickCellColour (success, warning, danger) value =
+            [ "success", success; "warning", warning; "danger", danger ]
+            |> List.tryFind ((fun (_, f) -> f value))
+            |> Option.map (fst >> sprintf "table-%s" >> _class)
+
+        let buildCell field pickers =
+            let colour = field |> Option.bind (pickCellColour pickers) |> Option.toList
+            td [ yield! colour ] [ describe field ]
+
+        let higherIsBetter = (fun x -> x > 40.), (fun x -> x > 10.), (fun _ -> true)
+        let lowerIsBetter = (fun x -> x < 10.), (fun x -> x < 40.), (fun _ -> true)
+
+        table [ _class "table table-bordered table-sm" ] [
+            thead [ _class "table-dark" ] [
                 tr [] [
                     let makeTh value (column: SortColumn) =
                         th [
@@ -97,14 +110,14 @@ module View =
                     makeTh "Nuclear & Other (% of total)" Nuclear
                 ]
             ]
-            tbody [] [
+            tbody [ _class "table-group-divider" ] [
                 for report in reports do
                     tr [] [
-                        td [] [ str report.Country ]
-                        td [] [ describe report.EnergyImports ]
-                        td [] [ describe report.RenewableEnergyConsumption ]
-                        td [] [ describe report.FossilFuelEnergyConsumption ]
-                        td [] [ describe report.Nuclear ]
+                        td [ _class "table-light" ] [ str report.Country ]
+                        buildCell report.EnergyImports lowerIsBetter
+                        buildCell report.RenewableEnergyConsumption higherIsBetter
+                        buildCell report.FossilFuelEnergyConsumption lowerIsBetter
+                        buildCell report.Nuclear higherIsBetter
                     ]
             ]
         ]
@@ -202,15 +215,20 @@ module DataAccess =
         |> List.truncate 10
 
     /// Finds all country-level reports that contain the supplied text.
-    let findReportsByCountries (text: string) =
+    let findReportsByCountries sortColumn (text: string) =
         allCountries
-        |> List.filter (fun country -> country.Name |> containsText text)
-        |> List.truncate 20
-        |> List.map createReport
+        |> Seq.filter (fun country -> country.Name |> containsText text)
+        |> Seq.truncate 100
+        |> Seq.map createReport
+        |> fun reports ->
+            match sortColumn with
+            | Some column -> reports |> sortBy column
+            | None -> reports
+        |> Seq.toList
 
     /// Looks for an exact match of a country or region based on the text supplied. If a region is matched, all
     /// countries within that region are returned.
-    let tryExactMatchReport (text: string) =
+    let tryExactMatchReport sortColumn (text: string) =
         let matchingCountry =
             allCountries
             |> List.tryFind (fun c -> c.Name.Equals(text, StringComparison.CurrentCultureIgnoreCase))
@@ -220,7 +238,14 @@ module DataAccess =
         | None ->
             allRegions
             |> List.tryFind (fun region -> region.Name.Equals(text, StringComparison.CurrentCultureIgnoreCase))
-            |> Option.map (fun region -> region.Countries |> Seq.map createReport |> Seq.toList)
+            |> Option.map (fun region ->
+                region.Countries
+                |> Seq.map createReport
+                |> fun reports ->
+                    match sortColumn with
+                    | Some column -> reports |> sortBy column
+                    | None -> reports
+                |> Seq.toList)
 
 module Api =
     open Microsoft.AspNetCore.Http
@@ -239,16 +264,11 @@ module Api =
         let request = request |> SearchRequest.OfRawSearchRequest
 
         let reports =
-            let unsorted =
-                match request.SearchInput with
-                | None -> DataAccess.findReportsByCountries ""
-                | Some searchInput ->
-                    DataAccess.tryExactMatchReport searchInput
-                    |> Option.defaultWith (fun () -> DataAccess.findReportsByCountries searchInput)
-
-            request.SortColumn
-            |> Option.map (Domain.sortReports unsorted)
-            |> Option.defaultValue unsorted
+            match request.SearchInput with
+            | None -> DataAccess.findReportsByCountries request.SortColumn ""
+            | Some searchInput ->
+                DataAccess.tryExactMatchReport request.SortColumn searchInput
+                |> Option.defaultWith (fun () -> DataAccess.findReportsByCountries request.SortColumn searchInput)
 
         return! htmlView (View.createReportsTable reports) next ctx
     }
