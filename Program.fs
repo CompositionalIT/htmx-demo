@@ -9,6 +9,7 @@ module Domain =
     type RawSearchRequest = {
         SearchInput: string
         SortColumn: string
+        SortDirection: string
     }
 
     /// Represents a report for a specific country.
@@ -45,25 +46,50 @@ module Domain =
             | "Nuclear" -> Some Nuclear
             | _ -> None
 
+    type SortDirection =
+        | Ascending
+        | Descending
+
+        member this.AsString =
+            match this with
+            | Ascending -> "Ascending"
+            | Descending -> "Descending"
+
+        static member TryOfString v =
+            match v with
+            | "Ascending" -> Some Ascending
+            | "Descending" -> Some Descending
+            | _ -> None
+
+    type Sort = SortColumn * SortDirection
+
     type SearchRequest =
         {
             SearchInput: string option
-            SortColumn: SortColumn option
+            Sort: Sort option
         }
 
         static member OfRawSearchRequest(request: RawSearchRequest) = {
             SearchInput = request.SearchInput |> Option.ofObj
-            SortColumn = SortColumn.TryOfString request.SortColumn
+            Sort =
+                match SortColumn.TryOfString request.SortColumn, SortDirection.TryOfString request.SortDirection with
+                | Some col, Some dir -> Some(col, dir)
+                | _ -> None
         }
 
     /// Sorts the supplied reports using the specified sort column.
-    let sortBy sortColumn =
-        match sortColumn with
-        | Country -> Seq.sortBy (fun c -> c.Country)
-        | Imports -> Seq.sortByDescending (fun c -> c.EnergyImports)
-        | Fossil -> Seq.sortByDescending (fun c -> c.FossilFuelEnergyConsumption)
-        | Renewables -> Seq.sortByDescending (fun c -> c.RenewableEnergyConsumption)
-        | Nuclear -> Seq.sortByDescending (fun c -> c.Nuclear)
+    let sortBy sort =
+        match sort with
+        | Country, Ascending -> Seq.sortBy (fun c -> c.Country)
+        | Country, Descending -> Seq.sortBy (fun c -> c.Country)
+        | Imports, Ascending -> Seq.sortBy (fun c -> c.EnergyImports)
+        | Imports, Descending -> Seq.sortByDescending (fun c -> c.EnergyImports)
+        | Fossil, Ascending -> Seq.sortBy (fun c -> c.FossilFuelEnergyConsumption)
+        | Fossil, Descending -> Seq.sortByDescending (fun c -> c.FossilFuelEnergyConsumption)
+        | Nuclear, Ascending -> Seq.sortBy (fun c -> c.Nuclear)
+        | Nuclear, Descending -> Seq.sortByDescending (fun c -> c.Nuclear)
+        | Renewables, Descending -> Seq.sortByDescending (fun c -> c.RenewableEnergyConsumption)
+        | Renewables, Ascending -> Seq.sortBy (fun c -> c.RenewableEnergyConsumption)
 
 module View =
     open Giraffe.Htmx
@@ -77,7 +103,7 @@ module View =
 
 
     /// Builds a table based on all reports.
-    let createReportsTable reports =
+    let createReportsTable currentSort reports =
         let pickCellColour (success, warning, danger) value =
             [ "success", success; "warning", warning; "danger", danger ]
             |> List.tryFind ((fun (_, f) -> f value))
@@ -95,11 +121,19 @@ module View =
                 tr [] [
                     let makeTh value (column: SortColumn) =
                         th [
+                            let direction =
+                                match currentSort with
+                                | Some (currentSortColumn, Ascending) when column = currentSortColumn -> Descending
+                                | _ -> Ascending
+
                             _hxInclude "#search-input"
                             _hxTarget "#search-results"
                             _hxPost "/do-search"
                             _hxTrigger "click"
-                            _hxVals $"{{ \"sortColumn\" : \"{column.AsString}\" }}"
+
+                            _hxVals
+                                $"{{ \"sortColumn\" : \"{column.AsString}\", \"sortDirection\" : \"{direction.AsString}\" }}"
+
                             _style "cursor: pointer"
                         ] [ str value ]
 
@@ -215,14 +249,14 @@ module DataAccess =
         |> List.truncate 10
 
     /// Finds all country-level reports that contain the supplied text.
-    let findReportsByCountries sortColumn (text: string) =
+    let findReportsByCountries sort (text: string) =
         allCountries
         |> Seq.filter (fun country -> country.Name |> containsText text)
         |> Seq.truncate 100
         |> Seq.map createReport
         |> fun reports ->
-            match sortColumn with
-            | Some column -> reports |> sortBy column
+            match sort with
+            | Some sort -> reports |> sortBy sort
             | None -> reports
         |> Seq.toList
 
@@ -265,12 +299,12 @@ module Api =
 
         let reports =
             match request.SearchInput with
-            | None -> DataAccess.findReportsByCountries request.SortColumn ""
+            | None -> DataAccess.findReportsByCountries request.Sort ""
             | Some searchInput ->
-                DataAccess.tryExactMatchReport request.SortColumn searchInput
-                |> Option.defaultWith (fun () -> DataAccess.findReportsByCountries request.SortColumn searchInput)
+                DataAccess.tryExactMatchReport request.Sort searchInput
+                |> Option.defaultWith (fun () -> DataAccess.findReportsByCountries request.Sort searchInput)
 
-        return! htmlView (View.createReportsTable reports) next ctx
+        return! htmlView (View.createReportsTable request.Sort reports) next ctx
     }
 
 let allRoutes = router {
