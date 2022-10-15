@@ -21,29 +21,34 @@ module Domain =
         FossilFuelEnergyConsumption: float option
     }
 
-    /// The sort column to use.
-    type SortColumn =
+    type NumericColumn =
         | Renewables
-        | Country
         | Imports
         | Fossil
         | Nuclear
 
+    type TextColumn = | Country
+
+    /// The sort column to use.
+    type SortColumn =
+        | TextColumn of TextColumn
+        | NumericColumn of NumericColumn
+
         member this.AsString =
             match this with
-            | Renewables -> "Renewables"
-            | Country -> "Country"
-            | Imports -> "Imports"
-            | Fossil -> "Fossil"
-            | Nuclear -> "Nuclear"
+            | TextColumn Country -> "Country"
+            | NumericColumn Renewables -> "Renewables"
+            | NumericColumn Imports -> "Imports"
+            | NumericColumn Fossil -> "Fossil"
+            | NumericColumn Nuclear -> "Nuclear"
 
         static member TryOfString v =
             match v with
-            | "Renewables" -> Some Renewables
-            | "Country" -> Some Country
-            | "Imports" -> Some Imports
-            | "Fossil" -> Some Fossil
-            | "Nuclear" -> Some Nuclear
+            | "Country" -> Some(TextColumn Country)
+            | "Renewables" -> Some(NumericColumn Renewables)
+            | "Imports" -> Some(NumericColumn Imports)
+            | "Fossil" -> Some(NumericColumn Fossil)
+            | "Nuclear" -> Some(NumericColumn Nuclear)
             | _ -> None
 
     type SortDirection =
@@ -78,18 +83,23 @@ module Domain =
         }
 
     /// Sorts the supplied reports using the specified sort column.
-    let sortBy sort =
-        match sort with
-        | Country, Ascending -> Seq.sortBy (fun c -> c.Country)
-        | Country, Descending -> Seq.sortBy (fun c -> c.Country)
-        | Imports, Ascending -> Seq.sortBy (fun c -> c.EnergyImports)
-        | Imports, Descending -> Seq.sortByDescending (fun c -> c.EnergyImports)
-        | Fossil, Ascending -> Seq.sortBy (fun c -> c.FossilFuelEnergyConsumption)
-        | Fossil, Descending -> Seq.sortByDescending (fun c -> c.FossilFuelEnergyConsumption)
-        | Nuclear, Ascending -> Seq.sortBy (fun c -> c.Nuclear)
-        | Nuclear, Descending -> Seq.sortByDescending (fun c -> c.Nuclear)
-        | Renewables, Descending -> Seq.sortByDescending (fun c -> c.RenewableEnergyConsumption)
-        | Renewables, Ascending -> Seq.sortBy (fun c -> c.RenewableEnergyConsumption)
+    let sortBy (column, direction) =
+        match column with
+        | TextColumn Country ->
+            match direction with
+            | Ascending -> Seq.sortBy (fun c -> c.Country)
+            | Descending -> Seq.sortByDescending (fun c -> c.Country)
+        | NumericColumn column ->
+            let column =
+                match column with
+                | Imports -> fun c -> c.EnergyImports
+                | Fossil -> fun c -> c.FossilFuelEnergyConsumption
+                | Nuclear -> fun c -> c.Nuclear
+                | Renewables -> fun c -> c.RenewableEnergyConsumption
+
+            match direction with
+            | Ascending -> Seq.sortBy column
+            | Descending -> Seq.sortByDescending column
 
 module View =
     open Giraffe.Htmx
@@ -121,9 +131,9 @@ module View =
                 tr [] [
                     let makeTh value (column: SortColumn) =
                         th [
-                            let direction =
+                            let nextDirection =
                                 match currentSort with
-                                | Some (currentSortColumn, Ascending) when column = currentSortColumn -> Descending
+                                | Some (currentColumn, Ascending) when column = currentColumn -> Descending
                                 | _ -> Ascending
 
                             _hxInclude "#search-input"
@@ -132,16 +142,16 @@ module View =
                             _hxTrigger "click"
 
                             _hxVals
-                                $"{{ \"sortColumn\" : \"{column.AsString}\", \"sortDirection\" : \"{direction.AsString}\" }}"
+                                $"{{ \"sortColumn\" : \"{column.AsString}\", \"sortDirection\" : \"{nextDirection.AsString}\" }}"
 
                             _style "cursor: pointer"
                         ] [ str value ]
 
-                    makeTh "Country" Country
-                    makeTh "Energy Imports (% of total)" Imports
-                    makeTh "Renewables (% of total)" Renewables
-                    makeTh "Fossil Fuels (% of total)" Fossil
-                    makeTh "Nuclear & Other (% of total)" Nuclear
+                    makeTh "Country" (TextColumn Country)
+                    makeTh "Energy Imports (% of total)" (NumericColumn Imports)
+                    makeTh "Renewables (% of total)" (NumericColumn Renewables)
+                    makeTh "Fossil Fuels (% of total)" (NumericColumn Fossil)
+                    makeTh "Nuclear & Other (% of total)" (NumericColumn Nuclear)
                 ]
             ]
             tbody [ _class "table-group-divider" ] [
