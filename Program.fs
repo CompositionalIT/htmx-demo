@@ -309,16 +309,14 @@ module DataAccess =
 
     type private CountryCodesWiki = HtmlProvider<"https://en.m.wikipedia.org/wiki/List_of_ISO_3166_country_codes">
 
-    let private tryGetCountryIsoCode value =
-        let sample = CountryCodesWiki.GetSample()
-
-        let dictionary =
+    let private tryGetCountryIsoCode =
+        let lookup =
             readOnlyDict [
-                for row in sample.Tables.``Current ISO 3166 country codesEdit``.Rows do
+                for row in CountryCodesWiki.GetSample().Tables.``Current ISO 3166 country codesEdit``.Rows do
                     row.``ISO 3166-1[2] - Alpha-3 code[5]``, row.``ISO 3166-1[2] - Alpha-2 code[5]``
             ]
 
-        Option.tryGetValue value dictionary |> Option.map (fun r -> r.ToLower())
+        fun value -> lookup |> Option.tryGetValue value |> Option.map (fun r -> r.ToLower())
 
     let private ctx = WorldBankData.GetDataContext()
     let private allCountries = ctx.Countries |> Seq.toList
