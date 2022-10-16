@@ -292,6 +292,17 @@ module View =
         ]
 
 module DataAccess =
+    open Microsoft.Extensions.Caching.Memory
+    open Polly
+    open Polly.Caching.Memory
+
+    let cachePolicy =
+        let memoryCacheProvider =
+            let memoryCache = new MemoryCache(MemoryCacheOptions())
+            MemoryCacheProvider memoryCache
+
+        Policy.Cache(memoryCacheProvider, TimeSpan.FromMinutes 5)
+
     open FSharp.Data
     let private ctx = WorldBankData.GetDataContext()
     let private allCountries = ctx.Countries |> Seq.toList
@@ -308,32 +319,35 @@ module DataAccess =
     let private matches (text: string) (v: string) =
         v.Trim().Equals(text.Trim(), StringComparison.CurrentCultureIgnoreCase)
 
-    let private tryCreateReport (country: WorldBankData.ServiceTypes.Country) = option {
-        let! nuclear =
-            country.Indicators.``Alternative and nuclear energy (% of total energy use)``.Values
-            |> Seq.tryLast
+    let tryCreateReport country =
+        let actualQuery (country: WorldBankData.ServiceTypes.Country) = option {
+            let! nuclear =
+                country.Indicators.``Alternative and nuclear energy (% of total energy use)``.Values
+                |> Seq.tryLast
 
-        let! imports =
-            country.Indicators.``Energy imports, net (% of energy use)``.Values
-            |> Seq.tryLast
+            let! imports =
+                country.Indicators.``Energy imports, net (% of energy use)``.Values
+                |> Seq.tryLast
 
-        let! renewables =
-            country.Indicators.``Renewable energy consumption (% of total final energy consumption)``.Values
-            |> Seq.tryLast
+            let! renewables =
+                country.Indicators.``Renewable energy consumption (% of total final energy consumption)``.Values
+                |> Seq.tryLast
 
-        let! fossils =
-            country.Indicators.``Fossil fuel energy consumption (% of total)``.Values
-            |> Seq.tryLast
+            let! fossils =
+                country.Indicators.``Fossil fuel energy consumption (% of total)``.Values
+                |> Seq.tryLast
 
-        return {
-            Country = country.Name
-            Code = country.Code.Substring(0, 2).ToLower()
-            Nuclear = nuclear
-            EnergyImports = imports
-            RenewableEnergyConsumption = renewables
-            FossilFuelEnergyConsumption = fossils
+            return {
+                Country = country.Name
+                Code = country.Code.Substring(0, 2).ToLower()
+                Nuclear = nuclear
+                EnergyImports = imports
+                RenewableEnergyConsumption = renewables
+                FossilFuelEnergyConsumption = fossils
+            }
         }
-    }
+
+        cachePolicy.Execute((fun ctx -> actualQuery country), Context $"{country.Code}")
 
     /// Gets the top ten destinations that contain the supplied text.
     let findDestinations (text: string option) =
