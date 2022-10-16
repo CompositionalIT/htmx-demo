@@ -79,9 +79,11 @@ module Domain =
         static member OfRawSearchRequest(request: RawSearchRequest) = {
             SearchInput = request.SearchInput |> Option.ofObj
             Sort =
-                match SortColumn.TryOfString request.SortColumn, SortDirection.TryOfString request.SortDirection with
-                | Some col, Some dir -> Some(col, dir)
-                | _ -> None
+                option {
+                    let! col = SortColumn.TryOfString request.SortColumn
+                    let! dir = SortDirection.TryOfString request.SortDirection
+                    return col, dir
+                }
         }
 
     /// Sorts the supplied reports using the specified sort column.
@@ -277,10 +279,10 @@ module View =
         ]
 
     /// Creates a datalist for the supplied countries.
-    let createCountriesSuggestions countries =
+    let createCountriesSuggestions destinations =
         datalist [ _id "search-suggestions" ] [
-            for (country: string) in countries do
-                option [ _value country ] []
+            for (destination: string) in destinations do
+                option [ _value destination ] []
         ]
 
 module DataAccess =
@@ -290,12 +292,15 @@ module DataAccess =
     let private allRegions = ctx.Regions |> Seq.toList
 
     let private countriesAndRegions =
-        let countries = allCountries |> List.map (fun country -> country.Name)
-        let regions = allRegions |> List.map (fun region -> region.Name)
+        let countries = allCountries |> List.map (fun country -> country.Name.Trim())
+        let regions = allRegions |> List.map (fun region -> region.Name.Trim())
         countries @ regions
 
     let private containsText (text: string) (v: string) =
-        v.Contains(text, StringComparison.CurrentCultureIgnoreCase)
+        v.Trim().Contains(text.Trim(), StringComparison.CurrentCultureIgnoreCase)
+
+    let private matches (text: string) (v: string) =
+        v.Trim().Equals(text.Trim(), StringComparison.CurrentCultureIgnoreCase)
 
     let private tryCreateReport (country: WorldBankData.ServiceTypes.Country) = option {
         let! nuclear =
@@ -345,15 +350,13 @@ module DataAccess =
     /// Looks for an exact match of a country or region based on the text supplied. Tries a country first; if no match,
     /// check for a region - if that matches, all countries within that region are returned.
     let tryExactMatchReport sortColumn (text: string) =
-        let matchingCountry =
-            allCountries
-            |> List.tryFind (fun c -> c.Name.Equals(text, StringComparison.CurrentCultureIgnoreCase))
+        let matchingCountry = allCountries |> List.tryFind (fun c -> c.Name |> matches text)
 
         match matchingCountry with
         | Some country -> tryCreateReport country |> Option.map List.singleton
         | None ->
             allRegions
-            |> List.tryFind (fun region -> region.Name.Equals(text, StringComparison.CurrentCultureIgnoreCase))
+            |> List.tryFind (fun region -> region.Name |> matches text)
             |> Option.map (fun region ->
                 region.Countries
                 |> Seq.choose tryCreateReport
@@ -367,17 +370,20 @@ module Api =
     open Microsoft.AspNetCore.Http
 
     /// Finds destinations to suggest.
-    let suggestDestinations next (ctx: HttpContext) = task {
-        let! request = ctx.BindModelAsync<RawSearchRequest>()
-        let request = request |> SearchRequest.OfRawSearchRequest
-        let countries = DataAccess.findDestinations request.SearchInput
-        return! htmlView (View.createCountriesSuggestions countries) next ctx
+    let suggestDestinations next (ctx: HttpContext) = taskOption {
+        let! request =
+            ctx.BindModelAsync<RawSearchRequest>()
+            |> Task.map SearchRequest.OfRawSearchRequest
+
+        let destinations = DataAccess.findDestinations request.SearchInput
+        return! htmlView (View.createCountriesSuggestions destinations) next ctx
     }
 
     /// Gets all energy reports using the query information supplied in the body.
     let findEnergyReports next (ctx: HttpContext) = task {
-        let! request = ctx.BindModelAsync<RawSearchRequest>()
-        let request = request |> SearchRequest.OfRawSearchRequest
+        let! request =
+            ctx.BindModelAsync<RawSearchRequest>()
+            |> Task.map SearchRequest.OfRawSearchRequest
 
         let reports =
             match request.SearchInput with
