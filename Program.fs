@@ -134,7 +134,7 @@ module View =
                             div [ _class "container-xl" ] [
                                 div [ _class "row row-cards" ] [
                                     div [ _class "col-12" ] [
-                                        form [ _class "card" ] [
+                                        div [ _class "card" ] [
                                             div [ _class "card-header card-header-light" ] [
                                                 h4 [ _class "card-title" ] [
                                                     str "World Bank Energy Statistics"
@@ -145,16 +145,14 @@ module View =
                                             ]
                                             div [ _class "card-body" ] [
                                                 div [ _class "row" ] [
-                                                    div [] [
+                                                    form [] [
                                                         label [ _for "search-input"; _class "form-label" ] [
                                                             str "Search Term"
                                                         ]
-                                                        datalist [ _id "search-suggestions" ] []
                                                         div [ _class "input-icon mb-3" ] [
                                                             input [
                                                                 _id "search-input"
                                                                 _class "form-control"
-                                                                _list "search-suggestions"
                                                                 _name "searchinput"
                                                                 _placeholder
                                                                     "Enter an exact or partial country, or a region."
@@ -163,7 +161,6 @@ module View =
                                                                 _hxTrigger "keyup changed delay:500ms"
                                                                 _hxPost "/search-suggestions"
                                                                 _hxTarget "#search-suggestions"
-                                                                _hxSwap HxSwap.OuterHtml
                                                             ]
                                                             span [
                                                                 _id "spinner"
@@ -177,6 +174,7 @@ module View =
                                                         ]
                                                     ]
                                                 ]
+                                                div [ _class "row" ] [ div [ _id "search-suggestions" ] [] ]
                                             ]
                                             div [ _class "card-footer d-flex" ] [
                                                 button [
@@ -202,6 +200,22 @@ module View =
             ]
         ]
         |> htmlView
+
+    /// Creates a datalist for the supplied countries.
+    let createCountriesSuggestions destinations =
+        div [ _class "list-group list-group-flush" ] [
+            for (destination: string) in destinations do
+                a [
+                    _href "#"
+                    _class "list-group-item list-group-item-action"
+                    _hxPost "/do-search"
+                    _hxTarget "#search-results"
+                    _hxVals $"{{ \"searchInput\" : \"{destination}\" }}"
+
+                ] [
+                    div [ _class "row align-items-center" ] [ div [ _class "col-auto" ] [ str destination ] ]
+                ]
+        ]
 
     /// Builds a table based on all reports.
     let createReportsTable currentSort reports =
@@ -282,13 +296,6 @@ module View =
                     ]
                 ]
             ]
-        ]
-
-    /// Creates a datalist for the supplied countries.
-    let createCountriesSuggestions destinations =
-        datalist [ _id "search-suggestions" ] [
-            for (destination: string) in destinations do
-                option [ _value destination ] []
         ]
 
 module DataAccess =
