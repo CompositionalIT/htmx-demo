@@ -70,20 +70,24 @@ module Domain =
 
     type Sort = SortColumn * SortDirection
 
+    let defaultSort = TextColumn Country, SortDirection.Ascending
+
     type SearchRequest =
         {
             SearchInput: string option
-            Sort: Sort option
+            Sort: Sort
         }
 
         static member OfRawSearchRequest(request: RawSearchRequest) = {
             SearchInput = request.SearchInput |> Option.ofObj
             Sort =
-                option {
+                let userSort = option {
                     let! col = SortColumn.TryOfString request.SortColumn
                     let! dir = SortDirection.TryOfString request.SortDirection
                     return col, dir
                 }
+
+                userSort |> Option.defaultValue defaultSort
         }
 
     /// Sorts the supplied reports using the specified sort column.
@@ -204,20 +208,20 @@ module View =
         |> htmlView
 
     /// Builds a table based on all reports.
-    let createReportsTable currentSort reports =
-        let pickCellColour (success, warning, danger) value =
-            [ "success", success; "warning", warning; "danger", danger ]
+    let createReportsTable sort reports =
+        let pickCellColour (success, warning) value =
+            [ "success", success; "warning", warning ]
             |> List.tryFind (fun (_, f) -> f value)
-            |> Option.map (fst >> sprintf "bg-%s")
-            |> Option.defaultValue ""
+            |> Option.map fst
+            |> Option.defaultValue "danger"
+            |> sprintf "bg-%s"
 
-        let buildCell value pickers =
+        let buildProgressBarCell value pickers =
             let colour = value |> pickCellColour pickers
 
             td [] [
                 div [ _class "row align-items-center" ] [
-                    div [ _class "col-12 col-lg-auto" ] [ str $"%.2f{value}%%" ]
-                    div [ _class "col" ] [
+                    div [ _class "col-12 col-lg-auto" ] [
                         div [ _class "progress"; _style "width: 5rem" ] [
                             div [
                                 _class $"progress-bar {colour}"
@@ -226,11 +230,12 @@ module View =
                             ] []
                         ]
                     ]
+                    div [ _class "col" ] [ str $"%.2f{value}%%" ]
                 ]
             ]
 
-        let higherIsBetter = (fun x -> x > 40.), (fun x -> x > 10.), (fun _ -> true)
-        let lowerIsBetter = (fun x -> x < 10.), (fun x -> x < 40.), (fun _ -> true)
+        let higherIsBetter = (fun x -> x > 40.), (fun x -> x > 10.)
+        let lowerIsBetter = (fun x -> x < 25.), (fun x -> x < 50.)
 
         div [ _class "card" ] [
             div [ _id "table-default"; _class "table-responsive" ] [
@@ -241,11 +246,9 @@ module View =
                                 th [] [
                                     button [
                                         let nextDirection, sortHeader =
-                                            match currentSort with
-                                            | Some (currentColumn, Ascending) when column = currentColumn ->
-                                                Descending, "asc"
-                                            | Some (currentColumn, Descending) when column = currentColumn ->
-                                                Ascending, "desc"
+                                            match sort with
+                                            | currentColumn, Ascending when column = currentColumn -> Descending, "asc"
+                                            | currentColumn, Descending when column = currentColumn -> Ascending, "desc"
                                             | _ -> Ascending, ""
 
                                         _class $"table-sort {sortHeader}"
@@ -276,10 +279,10 @@ module View =
                                     | None -> ()
                                     str $" {report.Country} "
                                 ]
-                                buildCell report.EnergyImports lowerIsBetter
-                                buildCell report.RenewableEnergyConsumption higherIsBetter
-                                buildCell report.FossilFuelEnergyConsumption lowerIsBetter
-                                buildCell report.Nuclear higherIsBetter
+                                buildProgressBarCell report.EnergyImports lowerIsBetter
+                                buildProgressBarCell report.RenewableEnergyConsumption higherIsBetter
+                                buildProgressBarCell report.FossilFuelEnergyConsumption lowerIsBetter
+                                buildProgressBarCell report.Nuclear higherIsBetter
                             ]
                     ]
                 ]
@@ -375,15 +378,12 @@ module DataAccess =
         allCountries
         |> Seq.filter (fun country -> country.Name |> containsText text)
         |> Seq.choose tryCreateReport
-        |> fun reports ->
-            match sort with
-            | Some sort -> reports |> sortBy sort
-            | None -> reports
+        |> sortBy sort
         |> Seq.toList
 
     /// Looks for an exact match of a country or region based on the text supplied. Tries a country first; if no match,
     /// check for a region - if that matches, all countries within that region are returned.
-    let tryExactMatchReport sortColumn (text: string) =
+    let tryExactMatchReport sort (text: string) =
         let matchingCountry = allCountries |> List.tryFind (fun c -> c.Name |> matches text)
 
         match matchingCountry with
@@ -391,14 +391,7 @@ module DataAccess =
         | None ->
             allRegions
             |> List.tryFind (fun region -> region.Name |> matches text)
-            |> Option.map (fun region ->
-                region.Countries
-                |> Seq.choose tryCreateReport
-                |> fun reports ->
-                    match sortColumn with
-                    | Some column -> reports |> sortBy column
-                    | None -> reports
-                |> Seq.toList)
+            |> Option.map (fun region -> region.Countries |> Seq.choose tryCreateReport |> sortBy sort |> Seq.toList)
 
 module Api =
     open Microsoft.AspNetCore.Http
