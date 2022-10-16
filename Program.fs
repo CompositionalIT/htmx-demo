@@ -135,12 +135,17 @@ module View =
                                 div [ _class "row row-cards" ] [
                                     div [ _class "col-12" ] [
                                         form [ _class "card" ] [
-                                            div [ _class "card-header" ] [
-                                                h4 [ _class "card-title" ] [ str "Find Energy Stats" ]
+                                            div [ _class "card-header card-header-light" ] [
+                                                h4 [ _class "card-title" ] [
+                                                    str "World Bank Energy Statistics"
+                                                    span [ _class "card-subtitle" ] [
+                                                        str "F#, HTMX and Tabler demonstrator"
+                                                    ]
+                                                ]
                                             ]
                                             div [ _class "card-body" ] [
                                                 div [ _class "row" ] [
-                                                    div [ _class "mb-3" ] [
+                                                    div [] [
                                                         label [ _for "search-input"; _class "form-label" ] [
                                                             str "Search Term"
                                                         ]
@@ -151,7 +156,8 @@ module View =
                                                                 _class "form-control"
                                                                 _list "search-suggestions"
                                                                 _name "searchinput"
-                                                                _placeholder "Enter a country, region or wildcard"
+                                                                _placeholder
+                                                                    "Enter an exact or partial country, or a region."
                                                                 _type "search"
 
                                                                 _hxTrigger "keyup changed delay:500ms"
