@@ -16,7 +16,7 @@ module Domain =
     /// Represents a report for a specific country.
     type CountryReport = {
         Country: string
-        Code: string
+        Code: string option
         Nuclear: float
         EnergyImports: float
         RenewableEnergyConsumption: float
@@ -207,7 +207,7 @@ module View =
     let createReportsTable currentSort reports =
         let pickCellColour (success, warning, danger) value =
             [ "success", success; "warning", warning; "danger", danger ]
-            |> List.tryFind ((fun (_, f) -> f value))
+            |> List.tryFind (fun (_, f) -> f value)
             |> Option.map (fst >> sprintf "bg-%s")
             |> Option.defaultValue ""
 
@@ -271,7 +271,9 @@ module View =
                         for report in reports do
                             tr [] [
                                 td [] [
-                                    span [ _class $"flag flag-country-{report.Code}" ] []
+                                    match report.Code with
+                                    | Some code -> span [ _class $"flag flag-country-{code}" ] []
+                                    | None -> ()
                                     str $" {report.Country} "
                                 ]
                                 buildCell report.EnergyImports lowerIsBetter
@@ -287,11 +289,12 @@ module View =
     /// Creates a datalist for the supplied countries.
     let createCountriesSuggestions destinations =
         datalist [ _id "search-suggestions" ] [
-            for (destination: string) in destinations do
+            for destination: string in destinations do
                 option [ _value destination ] []
         ]
 
 module DataAccess =
+    open FSharp.Data
     open Microsoft.Extensions.Caching.Memory
     open Polly
     open Polly.Caching.Memory
@@ -303,7 +306,20 @@ module DataAccess =
 
         Policy.Cache(memoryCacheProvider, TimeSpan.FromMinutes 5)
 
-    open FSharp.Data
+
+    type private CountryCodesWiki = HtmlProvider<"https://en.m.wikipedia.org/wiki/List_of_ISO_3166_country_codes">
+
+    let private tryGetCountryIsoCode value =
+        let sample = CountryCodesWiki.GetSample()
+
+        let dictionary =
+            readOnlyDict [
+                for row in sample.Tables.``Current ISO 3166 country codesEdit``.Rows do
+                    row.``ISO 3166-1[2] - Alpha-3 code[5]``, row.``ISO 3166-1[2] - Alpha-2 code[5]``
+            ]
+
+        Option.tryGetValue value dictionary |> Option.map (fun r -> r.ToLower())
+
     let private ctx = WorldBankData.GetDataContext()
     let private allCountries = ctx.Countries |> Seq.toList
     let private allRegions = ctx.Regions |> Seq.toList
@@ -339,7 +355,7 @@ module DataAccess =
 
             return {
                 Country = country.Name
-                Code = country.Code.Substring(0, 2).ToLower()
+                Code = tryGetCountryIsoCode country.Code
                 Nuclear = nuclear
                 EnergyImports = imports
                 RenewableEnergyConsumption = renewables
