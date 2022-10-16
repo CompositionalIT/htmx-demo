@@ -1,4 +1,5 @@
-﻿open Giraffe
+﻿open FsToolkit.ErrorHandling
+open Giraffe
 open Saturn
 open System
 
@@ -15,10 +16,11 @@ module Domain =
     /// Represents a report for a specific country.
     type CountryReport = {
         Country: string
-        Nuclear: float option
-        EnergyImports: float option
-        RenewableEnergyConsumption: float option
-        FossilFuelEnergyConsumption: float option
+        Code: string
+        Nuclear: float
+        EnergyImports: float
+        RenewableEnergyConsumption: float
+        FossilFuelEnergyConsumption: float
     }
 
     type NumericColumn =
@@ -27,7 +29,7 @@ module Domain =
         | Fossil
         | Nuclear
 
-    type TextColumn = | Country
+    type TextColumn = Country
 
     /// The sort column to use.
     type SortColumn =
@@ -106,113 +108,173 @@ module View =
     open Giraffe.ViewEngine
     open Giraffe.ViewEngine.Htmx
 
-    let private describe =
-        function
-        | None -> str "-"
-        | Some v -> str $"%.2f{v}%%"
-
-
-    /// Builds a table based on all reports.
-    let createReportsTable currentSort reports =
-        let pickCellColour (success, warning, danger) value =
-            [ "success", success; "warning", warning; "danger", danger ]
-            |> List.tryFind ((fun (_, f) -> f value))
-            |> Option.map (fst >> sprintf "table-%s" >> _class)
-
-        let buildCell field pickers =
-            let colour = field |> Option.bind (pickCellColour pickers) |> Option.toList
-            td [ yield! colour ] [ describe field ]
-
-        let higherIsBetter = (fun x -> x > 40.), (fun x -> x > 10.), (fun _ -> true)
-        let lowerIsBetter = (fun x -> x < 10.), (fun x -> x < 40.), (fun _ -> true)
-
-        table [ _class "table table-bordered table-sm" ] [
-            thead [ _class "table-dark" ] [
-                tr [] [
-                    let makeTh value (column: SortColumn) =
-                        th [
-                            let nextDirection =
-                                match currentSort with
-                                | Some (currentColumn, Ascending) when column = currentColumn -> Descending
-                                | _ -> Ascending
-
-                            _hxInclude "#search-input"
-                            _hxTarget "#search-results"
-                            _hxPost "/do-search"
-                            _hxTrigger "click"
-
-                            _hxVals
-                                $"{{ \"sortColumn\" : \"{column.AsString}\", \"sortDirection\" : \"{nextDirection.AsString}\" }}"
-
-                            _style "cursor: pointer"
-                        ] [ str value ]
-
-                    makeTh "Country" (TextColumn Country)
-                    makeTh "Energy Imports (% of total)" (NumericColumn Imports)
-                    makeTh "Renewables (% of total)" (NumericColumn Renewables)
-                    makeTh "Fossil Fuels (% of total)" (NumericColumn Fossil)
-                    makeTh "Nuclear & Other (% of total)" (NumericColumn Nuclear)
-                ]
-            ]
-            tbody [ _class "table-group-divider" ] [
-                for report in reports do
-                    tr [] [
-                        td [ _class "table-light" ] [ str report.Country ]
-                        buildCell report.EnergyImports lowerIsBetter
-                        buildCell report.RenewableEnergyConsumption higherIsBetter
-                        buildCell report.FossilFuelEnergyConsumption lowerIsBetter
-                        buildCell report.Nuclear higherIsBetter
-                    ]
-            ]
-        ]
-
     /// The initial start page of the application.
     let startingPage =
         html [] [
             head [] [
                 link [
                     _rel "stylesheet"
-                    _href "https://cdn.jsdelivr.net/npm/bootstrap@5.2.0/dist/css/bootstrap.min.css"
+                    _href "https://cdn.jsdelivr.net/npm/@tabler/core@latest/dist/css/tabler.min.css"
                 ]
+                link [
+                    _rel "stylesheet"
+                    _href "https://cdn.jsdelivr.net/npm/@tabler/core@latest/dist/css/tabler-flags.min.css"
+                ]
+                script [
+                    _src "https://cdn.jsdelivr.net/npm/@tabler/core@latest/dist/js/tabler.min.js"
+                ] []
             ]
             Script.minified
-            body [ _class "p-3 m-0 border-0 bd-example" ] [
-                form [] [
-                    div [ _class "mb-3" ] [
-                        label [ _for "search-input"; _class "form-label" ] [ str "Find energy stats!" ]
-                        datalist [ _id "search-suggestions" ] []
-                        input [
-                            _id "search-input"
-                            _class "form-control"
-                            _list "search-suggestions"
-                            _name "searchinput"
-                            _placeholder "Enter a country name"
-                            _type "search"
+            body [ _class "theme-light" ] [
+                div [ _class "page" ] [
+                    div [ _class "page-wrapper" ] [
+                        div [ _class "page-body" ] [
+                            div [ _class "container-xl" ] [
+                                div [ _class "row row-cards" ] [
+                                    div [ _class "col-12" ] [
+                                        form [ _class "card" ] [
+                                            div [ _class "card-header" ] [
+                                                h4 [ _class "card-title" ] [ str "Find Energy Stats" ]
+                                            ]
+                                            div [ _class "card-body" ] [
+                                                div [ _class "row" ] [
+                                                    div [ _class "mb-3" ] [
+                                                        label [ _for "search-input"; _class "form-label" ] [
+                                                            str "Search Term"
+                                                        ]
+                                                        datalist [ _id "search-suggestions" ] []
+                                                        div [ _class "input-icon mb-3" ] [
+                                                            input [
+                                                                _id "search-input"
+                                                                _class "form-control"
+                                                                _list "search-suggestions"
+                                                                _name "searchinput"
+                                                                _placeholder "Enter a country, region or wildcard"
+                                                                _type "search"
 
-                            _hxTrigger "keyup changed delay:500ms"
-                            _hxPost "/search-suggestions"
-                            _hxTarget "#search-suggestions"
-                            _hxSwap HxSwap.OuterHtml
+                                                                _hxTrigger "keyup changed delay:500ms"
+                                                                _hxPost "/search-suggestions"
+                                                                _hxTarget "#search-suggestions"
+                                                                _hxSwap HxSwap.OuterHtml
+                                                            ]
+                                                            span [
+                                                                _id "spinner"
+                                                                _class "htmx-indicator input-icon-addon"
+                                                            ] [
+                                                                div [
+                                                                    _class "spinner-border spinner-border-sm"
+                                                                    attr "role" "status"
+                                                                ] []
+                                                            ]
+                                                        ]
+                                                    ]
+                                                ]
+                                            ]
+                                            div [ _class "card-footer d-flex" ] [
+                                                button [
+                                                    _class "btn btn-primary"
+                                                    _id "search-button"
+                                                    _name "searchButton"
+                                                    _type "submit"
+
+                                                    _hxPost "/do-search"
+                                                    _hxInclude "#search-input"
+                                                    _hxTarget "#search-results"
+                                                    _hxIndicator "#spinner"
+                                                ] [ str " Search!" ]
+                                            ]
+                                        ]
+                                        div [ _id "search-results"; _class "mt-3" ] []
+                                    ]
+                                ]
+                            ]
                         ]
                     ]
-                    button [
-                        _class "btn btn-primary"
-                        _id "search-button"
-                        _name "searchButton"
-                        _type "button"
-
-                        _hxPost "/do-search"
-                        _hxInclude "#search-input"
-                        _hxTarget "#search-results"
-                    ] [
-                        span [ _class "htmx-indicator spinner-border spinner-border-sm" ] []
-                        str "Search!"
-                    ]
                 ]
-                div [ _id "search-results"; _class "mt-3" ] []
             ]
         ]
         |> htmlView
+
+    /// Builds a table based on all reports.
+    let createReportsTable currentSort reports =
+        let pickCellColour (success, warning, danger) value =
+            [ "success", success; "warning", warning; "danger", danger ]
+            |> List.tryFind ((fun (_, f) -> f value))
+            |> Option.map (fst >> sprintf "bg-%s")
+            |> Option.defaultValue ""
+
+        let buildCell value pickers =
+            let colour = value |> pickCellColour pickers
+
+            td [] [
+                div [ _class "row align-items-center" ] [
+                    div [ _class "col-12 col-lg-auto" ] [ str $"%.2f{value}%%" ]
+                    div [ _class "col" ] [
+                        div [ _class "progress"; _style "width: 5rem" ] [
+                            div [
+                                _class $"progress-bar {colour}"
+                                _style $"width: {value}%%"
+                                attr "role" "progressbar"
+                            ] []
+                        ]
+                    ]
+                ]
+            ]
+
+        let higherIsBetter = (fun x -> x > 40.), (fun x -> x > 10.), (fun _ -> true)
+        let lowerIsBetter = (fun x -> x < 10.), (fun x -> x < 40.), (fun _ -> true)
+
+        div [ _class "card" ] [
+            div [ _id "table-default"; _class "table-responsive" ] [
+                table [ _class "table card-table table-striped datatable" ] [
+                    thead [] [
+                        tr [] [
+                            let makeTh value (column: SortColumn) =
+                                th [] [
+                                    button [
+                                        let nextDirection, sortHeader =
+                                            match currentSort with
+                                            | Some (currentColumn, Ascending) when column = currentColumn ->
+                                                Descending, "asc"
+                                            | Some (currentColumn, Descending) when column = currentColumn ->
+                                                Ascending, "desc"
+                                            | _ -> Ascending, ""
+
+                                        _class $"table-sort {sortHeader}"
+
+                                        _hxInclude "#search-input"
+                                        _hxTarget "#search-results"
+                                        _hxPost "/do-search"
+                                        _hxTrigger "click"
+
+                                        _hxVals
+                                            $"{{ \"sortColumn\" : \"{column.AsString}\", \"sortDirection\" : \"{nextDirection.AsString}\" }}"
+                                    ] [ str value ]
+                                ]
+
+                            makeTh "Country" (TextColumn Country)
+                            makeTh "Energy Imports (% of total)" (NumericColumn Imports)
+                            makeTh "Renewables (% of total)" (NumericColumn Renewables)
+                            makeTh "Fossil Fuels (% of total)" (NumericColumn Fossil)
+                            makeTh "Nuclear & Other (% of total)" (NumericColumn Nuclear)
+                        ]
+                    ]
+                    tbody [ _class "table-group-divider" ] [
+                        for report in reports do
+                            tr [] [
+                                td [] [
+                                    span [ _class $"flag flag-country-{report.Code}" ] []
+                                    str $" {report.Country} "
+                                ]
+                                buildCell report.EnergyImports lowerIsBetter
+                                buildCell report.RenewableEnergyConsumption higherIsBetter
+                                buildCell report.FossilFuelEnergyConsumption lowerIsBetter
+                                buildCell report.Nuclear higherIsBetter
+                            ]
+                    ]
+                ]
+            ]
+        ]
 
     /// Creates a datalist for the supplied countries.
     let createCountriesSuggestions countries =
@@ -235,20 +297,31 @@ module DataAccess =
     let private containsText (text: string) (v: string) =
         v.Contains(text, StringComparison.CurrentCultureIgnoreCase)
 
-    let private createReport (country: WorldBankData.ServiceTypes.Country) = {
-        Country = country.Name
-        Nuclear =
+    let private tryCreateReport (country: WorldBankData.ServiceTypes.Country) = option {
+        let! nuclear =
             country.Indicators.``Alternative and nuclear energy (% of total energy use)``.Values
             |> Seq.tryLast
-        EnergyImports =
+
+        let! imports =
             country.Indicators.``Energy imports, net (% of energy use)``.Values
             |> Seq.tryLast
-        RenewableEnergyConsumption =
+
+        let! renewables =
             country.Indicators.``Renewable energy consumption (% of total final energy consumption)``.Values
             |> Seq.tryLast
-        FossilFuelEnergyConsumption =
+
+        let! fossils =
             country.Indicators.``Fossil fuel energy consumption (% of total)``.Values
             |> Seq.tryLast
+
+        return {
+            Country = country.Name
+            Code = country.Code.Substring(0, 2).ToLower()
+            Nuclear = nuclear
+            EnergyImports = imports
+            RenewableEnergyConsumption = renewables
+            FossilFuelEnergyConsumption = fossils
+        }
     }
 
     /// Gets the top ten destinations that contain the supplied text.
@@ -262,29 +335,28 @@ module DataAccess =
     let findReportsByCountries sort (text: string) =
         allCountries
         |> Seq.filter (fun country -> country.Name |> containsText text)
-        |> Seq.truncate 100
-        |> Seq.map createReport
+        |> Seq.choose tryCreateReport
         |> fun reports ->
             match sort with
             | Some sort -> reports |> sortBy sort
             | None -> reports
         |> Seq.toList
 
-    /// Looks for an exact match of a country or region based on the text supplied. If a region is matched, all
-    /// countries within that region are returned.
+    /// Looks for an exact match of a country or region based on the text supplied. Tries a country first; if no match,
+    /// check for a region - if that matches, all countries within that region are returned.
     let tryExactMatchReport sortColumn (text: string) =
         let matchingCountry =
             allCountries
             |> List.tryFind (fun c -> c.Name.Equals(text, StringComparison.CurrentCultureIgnoreCase))
 
         match matchingCountry with
-        | Some country -> Some [ createReport country ]
+        | Some country -> tryCreateReport country |> Option.map List.singleton
         | None ->
             allRegions
             |> List.tryFind (fun region -> region.Name.Equals(text, StringComparison.CurrentCultureIgnoreCase))
             |> Option.map (fun region ->
                 region.Countries
-                |> Seq.map createReport
+                |> Seq.choose tryCreateReport
                 |> fun reports ->
                     match sortColumn with
                     | Some column -> reports |> sortBy column
