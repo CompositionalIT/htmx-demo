@@ -297,6 +297,26 @@ module View =
                 ]
             ]
         ]
+        
+    let clearSuggestions =
+        div [ _id "search-suggestions"
+              _hxSwapOob "true" ] []
+    
+    let completeSearchTerm (search: string) =
+        input [
+            _id "search-input"
+            _class "form-control"
+            _name "searchinput"
+            _value search
+            _placeholder
+                "Enter an exact or partial country, or a region."
+            _type "search"
+
+            _hxTrigger "keyup changed delay:500ms"
+            _hxPost "/search-suggestions"
+            _hxTarget "#search-suggestions"
+            _hxSwapOob "true"
+        ]
 
 module DataAccess =
     open Microsoft.Extensions.Caching.Memory
@@ -394,6 +414,7 @@ module DataAccess =
                 |> Seq.toList)
 
 module Api =
+    open Giraffe.ViewEngine
     open Microsoft.AspNetCore.Http
 
     /// Finds destinations to suggest.
@@ -419,7 +440,13 @@ module Api =
                 DataAccess.tryExactMatchReport request.Sort searchInput
                 |> Option.defaultWith (fun () -> DataAccess.findReportsByCountries request.Sort searchInput)
 
-        return! htmlView (View.createReportsTable request.Sort reports) next ctx
+                
+        let oobResponse =
+            RenderView.AsString.htmlNodes [ View.createReportsTable request.Sort reports
+                                            View.clearSuggestions
+                                            View.completeSearchTerm request.SearchInput.Value ]
+
+        return! htmlString oobResponse next ctx
     }
 
 let allRoutes = router {
